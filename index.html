@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M12 2L22 12L12 22L2 12L12 2Z' stroke='%238fc9aa' stroke-width='2' fill='%23142f23'/%3E%3C/svg%3E">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 <title>AU SOCIETAS GRAND RESTAURANT — Restaurant, Dining & Lounge Bar</title>
@@ -221,6 +222,25 @@
   }
   .modal.fullscreen { max-width:1100px; height:94vh; max-height:94vh; border-radius:20px 20px 0 0; }
   @keyframes slideUp{from{transform:translateY(40px); opacity:0;} to{transform:translateY(0); opacity:1;}}
+  .guest-toast{
+    position:fixed; top:18px; left:50%; z-index:600;
+    width:min(440px, calc(100vw - 32px));
+    background:var(--panel); border:1px solid var(--line-strong); border-left:4px solid var(--mint);
+    border-radius:14px; padding:16px 16px 16px 14px; display:flex; align-items:flex-start; gap:12px;
+    box-shadow:0 24px 55px rgba(0,0,0,.5);
+    transform:translateX(-50%) translateY(-140%); opacity:0;
+    transition:transform .4s cubic-bezier(.2,.9,.25,1.25), opacity .3s ease;
+    pointer-events:none;
+  }
+  .guest-toast.show{ transform:translateX(-50%) translateY(0); opacity:1; pointer-events:auto; }
+  .guest-toast.warn{ border-left-color:var(--red); }
+  .guest-toast .gt-icon{ font-size:1.35rem; line-height:1; flex:0 0 auto; margin-top:1px; }
+  .guest-toast .gt-text{ font-size:.9rem; color:var(--ink-0); line-height:1.45; font-family:'Inter',sans-serif; }
+  .guest-toast .gt-close{
+    margin-left:auto; cursor:pointer; color:var(--ink-2); font-size:1.1rem; line-height:1;
+    background:none; border:0; padding:2px 4px; flex:0 0 auto;
+  }
+  .guest-toast .gt-close:hover{ color:var(--ink-0); }
   .modal-handle{width:40px; height:4px; border-radius:999px; background:var(--line-strong); margin:0 auto 18px;}
   .modal h3{font-size:1.4rem; color:var(--ink-0); margin-bottom:4px;}
   .modal .modal-sub{font-size:0.85rem; color:var(--ink-2); margin-bottom:20px;}
@@ -519,6 +539,7 @@
   .reservation-feedback.error{color:var(--red);background:rgba(255,107,107,.06);border-color:rgba(255,107,107,.25);}
   .reservation-feedback.error .feedback-dot{background:var(--red);box-shadow:none;}
   @keyframes pulseSave{50%{opacity:.35;transform:scale(.7)}}
+  @keyframes trackPulse{0%{box-shadow:0 0 0 0 rgba(143,201,170,.55);}70%{box-shadow:0 0 0 8px rgba(143,201,170,0);}100%{box-shadow:0 0 0 0 rgba(143,201,170,0);}}
   .email-status{
     display:block;
     margin-top:5px;
@@ -799,6 +820,37 @@
   </div>
 </div>
 
+<!-- TRACK MY RESERVATION (live) -->
+<div class="overlay" id="trackOverlay">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3 style="text-align:center;">Track My Reservation</h3>
+    <div class="modal-sub" style="text-align:center;">Live status — updates the instant our team processes it.</div>
+    <div id="trackSearchView">
+      <div class="form-field">
+        <label>Reservation Number</label>
+        <input type="text" id="trackRef" placeholder="ASG-0001" autocomplete="off" onkeydown="if(event.key==='Enter') submitTrackLookup()">
+      </div>
+      <div class="form-field">
+        <label>Email used to book</label>
+        <input type="email" id="trackEmail" placeholder="juan@email.com" autocomplete="off" onkeydown="if(event.key==='Enter') submitTrackLookup()">
+      </div>
+      <div id="trackError" style="min-height:18px;text-align:center;color:var(--red);font-size:.78rem;margin-bottom:4px;"></div>
+      <button class="btn-primary" onclick="submitTrackLookup()">Find My Reservation</button>
+      <button class="btn-ghost" onclick="closeModal('trackOverlay')">Cancel</button>
+    </div>
+    <div id="trackResultView" style="display:none;">
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px;">
+        <span id="trackLiveDot" style="width:8px;height:8px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 rgba(143,201,170,.6);animation:trackPulse 1.8s infinite;"></span>
+        <span style="font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--mint);">Live</span>
+      </div>
+      <div class="modal-summary" id="trackBody"></div>
+      <button class="btn-ghost" onclick="resetTrackModal()">Track Another Reservation</button>
+      <button class="btn-ghost" onclick="closeModal('trackOverlay')">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- ADMIN LOGIN -->
 <div class="overlay" id="adminLoginOverlay">
   <div class="modal">
@@ -939,6 +991,25 @@ async function sendConfirmationEmail(params){
     return { sent:false, error:err };
   }
 }
+
+async function notifyReservationStatus(b, message){
+  if(!b || !b.email) return;
+  const result = await sendConfirmationEmail({
+    to_email: b.email,
+    to_name: b.name,
+    booking_id: b.id,
+    booking_type: b.type,
+    item: b.item,
+    date: b.date,
+    guests: b.guests,
+    payment_method: b.paymentMethod,
+    total: peso(b.total),
+    notes: b.notes || '—',
+    message: message
+  });
+  if(result.sent) addAuditLog(`[EMAIL] Status update sent to ${b.email} for ${b.id}: "${message}"`);
+  else if(!result.skipped) addAuditLog(`[EMAIL] Status update to ${b.email} for ${b.id} failed to send.`);
+}
 let realtimeChannel = null;
 let databaseOnline = false;
 
@@ -1004,8 +1075,13 @@ function startRealtimeMonitoring(){
   realtimeChannel=supabaseClient.channel('students-live')
     .on('postgres_changes',{event:'*',schema:'public',table:'students'},payload=>{
       console.log('Realtime database event:',payload);
-      loadDatabaseStudents();
-      showReservationFeedback('Database updated in real time.');
+      loadDatabaseStudents().then(()=>{
+        if(trackedBookingId) renderTrackedBooking();
+        checkMyReservationUpdates();
+        if(document.getElementById('staffPortalOverlay')?.classList.contains('show')){
+          showReservationFeedback('Database updated in real time.');
+        }
+      });
     })
     .subscribe(status=>{
       console.log('Realtime status:',status);
@@ -1580,6 +1656,8 @@ async function submitBooking(){
     renderStaffRoleModules();
   }
 
+  rememberMyReservation(bookingId, name, email, 'Confirmed');
+
   addAuditLog(`[NEW REGISTRATION] ${bookingId} submitted by ${name} (${studentId})${resourceId?` · Resource ${resourceId}`:''}${deliveryRoom?` · Delivery Room ${deliveryRoom}`:''}`);
 
   addAuditLog(`[NEW BOOKING] ${bookingId} submitted by ${name} (${peso(total)})${resourceId?` · Resource ${resourceId}`:''}${deliveryRoom?` · Delivery Room ${deliveryRoom}`:''}`);
@@ -1595,7 +1673,8 @@ async function submitBooking(){
       guests: state.guests,
       payment_method: paymentMethod,
       total: peso(total),
-      notes: requests || '—'
+      notes: requests || '—',
+      message: `Thank you, ${name}! Your reservation ${bookingId} is confirmed. We look forward to welcoming you.`
     }).then(result=>{
       if(result.sent) addAuditLog(`[EMAIL] Confirmation email sent to ${email} for ${bookingId}.`);
       else if(!result.skipped) addAuditLog(`[EMAIL] Confirmation email to ${email} for ${bookingId} failed to send.`);
@@ -1622,14 +1701,127 @@ async function submitBooking(){
 }
 
 
-function lookupGuestBooking(){
-  const ref=(prompt('Enter your AU SOCIETAS GRAND RESTAURANT booking reference:')||'').trim().toUpperCase();
-  if(!ref)return;
-  const b=bookingsDatabase.find(x=>x.id.toUpperCase()===ref);
-  if(!b){alert('No reservation was found for '+ref+'.');return;}
-  const status=b.status||'Confirmed';
-  alert(`MERIDIAN & MOSS\n\nBooking: ${b.id}\nGuest: ${b.name}\nReservation: ${b.type}\n${b.item}\nDate: ${b.date}\nStatus: ${status}\nTotal: ${peso(b.total)}`);
+let trackedBookingId = null;
+
+/* ---------------- MY-RESERVATIONS (in-site notifications) ---------------- */
+function getMyReservations(){
+  try{ return JSON.parse(localStorage.getItem('myReservations')||'[]'); }
+  catch(e){ return []; }
 }
+function rememberMyReservation(id, name, email, status){
+  try{
+    const list=getMyReservations();
+    if(!list.find(r=>r.id===id)) list.push({id, name, email, seenStatus:status});
+    localStorage.setItem('myReservations', JSON.stringify(list));
+  }catch(e){ /* localStorage unavailable — notifications just won't persist */ }
+}
+function friendlyStatusLine(b){
+  if(b.status==='Checked-In') return `You're checked in! Reservation ${b.id} is now active.`;
+  if(b.status==='Completed') return `Reservation ${b.id} is complete — thank you for choosing us!`;
+  if(b.status==='Cancelled') return `Reservation ${b.id} has been cancelled.`;
+  return `Reservation ${b.id} is confirmed.`;
+}
+function statusIcon(status){
+  if(status==='Checked-In') return '✅';
+  if(status==='Completed') return '🎉';
+  if(status==='Cancelled') return '⚠️';
+  return '🔔';
+}
+function showGuestNotification(message, icon){
+  let el=document.getElementById('guestToast');
+  if(!el){
+    el=document.createElement('div');
+    el.id='guestToast';
+    el.className='guest-toast';
+    el.innerHTML='<span class="gt-icon" id="guestToastIcon"></span><span class="gt-text" id="guestToastText"></span><button class="gt-close" onclick="hideGuestNotification()">×</button>';
+    document.body.appendChild(el);
+  }
+  el.classList.toggle('warn', icon==='⚠️');
+  document.getElementById('guestToastIcon').textContent=icon||'🔔';
+  document.getElementById('guestToastText').textContent=message;
+  requestAnimationFrame(()=>el.classList.add('show'));
+  clearTimeout(window._guestToastTimer);
+  window._guestToastTimer=setTimeout(hideGuestNotification, 6000);
+}
+function hideGuestNotification(){
+  const el=document.getElementById('guestToast');
+  if(el) el.classList.remove('show');
+}
+function checkMyReservationUpdates(){
+  const list=getMyReservations();
+  console.log('[Notifier] checking', list.length, 'tracked reservation(s) on this device:', list.map(r=>r.id));
+  if(!list.length) return;
+  let changed=false;
+  list.forEach(entry=>{
+    const b=bookingsDatabase.find(x=>x.id===entry.id);
+    if(!b) return;
+    if(b.status!==entry.seenStatus){
+      const firstName=(b.name||entry.name||'there').split(' ')[0];
+      console.log('[Notifier] status change detected:', entry.id, entry.seenStatus, '->', b.status);
+      showGuestNotification(`Hi ${firstName}, ${friendlyStatusLine(b)}`, statusIcon(b.status));
+      entry.seenStatus=b.status;
+      changed=true;
+    }
+  });
+  if(changed){
+    try{ localStorage.setItem('myReservations', JSON.stringify(list)); }catch(e){}
+  }
+}
+
+function lookupGuestBooking(){
+  resetTrackModal();
+  document.getElementById('trackOverlay').classList.add('show');
+}
+
+function resetTrackModal(){
+  trackedBookingId = null;
+  document.getElementById('trackSearchView').style.display='';
+  document.getElementById('trackResultView').style.display='none';
+  document.getElementById('trackRef').value='';
+  document.getElementById('trackEmail').value='';
+  document.getElementById('trackError').textContent='';
+}
+
+function submitTrackLookup(){
+  const ref=(document.getElementById('trackRef').value||'').trim().toUpperCase();
+  const email=(document.getElementById('trackEmail').value||'').trim().toLowerCase();
+  const errEl=document.getElementById('trackError');
+  if(!ref || !email){ errEl.textContent='Enter both your reservation number and email.'; return; }
+  const b=bookingsDatabase.find(x=>x.id.toUpperCase()===ref && (x.email||'').toLowerCase()===email);
+  if(!b){ errEl.textContent='No matching reservation found. Check your reservation number and email.'; return; }
+  errEl.textContent='';
+  trackedBookingId=b.id;
+  document.getElementById('trackSearchView').style.display='none';
+  document.getElementById('trackResultView').style.display='';
+  renderTrackedBooking();
+}
+
+function statusTone(status){
+  if(status==='Checked-In') return 'var(--mint)';
+  if(status==='Completed') return 'var(--ink-1)';
+  if(status==='Cancelled') return 'var(--red)';
+  return 'var(--accent-warm)';
+}
+
+function renderTrackedBooking(){
+  if(!trackedBookingId) return;
+  const b=bookingsDatabase.find(x=>x.id===trackedBookingId);
+  const body=document.getElementById('trackBody');
+  if(!body) return;
+  if(!b){ body.innerHTML='<div class="receipt-line">This reservation is no longer available.</div>'; return; }
+  const status=b.status||'Confirmed';
+  body.innerHTML=`
+    <div class="receipt-line"><span>Reservation</span><b>${b.id}</b></div>
+    <div class="receipt-line"><span>Guest</span><b>${b.name}</b></div>
+    <div class="receipt-line"><span>Type</span><b>${b.type}</b></div>
+    <div class="receipt-line"><span>${b.item||''}</span><b></b></div>
+    <div class="receipt-line"><span>Date</span><b>${b.date}</b></div>
+    ${b.roomNumber?`<div class="receipt-line"><span>Room</span><b>${b.roomNumber}</b></div>`:''}
+    <div class="receipt-line"><span>Status</span><b style="color:${statusTone(status)}">${status}</b></div>
+    <div class="receipt-line"><span>Total</span><b>${peso(b.total)}</b></div>
+  `;
+}
+
 function printConfirmation(){
   const body=document.getElementById('receiptBody');
   if(!body) return;
@@ -2174,6 +2366,7 @@ async function checkInReservation(id){
   b.status='Checked-In'; b.attendanceStatus='Checked In';
   if(dbReady() && b.dbId) await updateStudentInDatabase(b.dbId,{registration_status:'Checked-In',attendance_status:'Checked In'});
   if(b.type==='Hotel Suite' && b.roomNumber){ await occupyRoom(b.roomNumber, b.name); }
+  notifyReservationStatus(b, `You're checked in! Reservation ${b.id} is now active. Welcome, ${b.name}.`);
   addAuditLog(`[CHECK-IN] ${id} checked in by ${roleConfig[currentRoleKey].name}.`); renderStaffRoleModules();
 }
 async function checkOutReservation(id){
@@ -2182,6 +2375,7 @@ async function checkOutReservation(id){
   b.status='Completed'; b.attendanceStatus='Checked Out';
   if(dbReady() && b.dbId) await updateStudentInDatabase(b.dbId,{registration_status:'Completed',attendance_status:'Checked Out'});
   if(b.type==='Hotel Suite' && b.roomNumber){ await releaseRoom(b.roomNumber); }
+  notifyReservationStatus(b, `Reservation ${b.id} is complete. Thank you for choosing AU SOCIETAS GRAND RESTAURANT — we hope to see you again soon.`);
   addAuditLog(`[CHECK-OUT] ${id} checked out by ${roleConfig[currentRoleKey].name}.`); renderStaffRoleModules();
 }
 function editBookingByRole(id){
@@ -2190,7 +2384,7 @@ function editBookingByRole(id){
 }
 function cancelBookingByRole(id){
   if(!requirePermission('reservation.cancel','cancel reservation')) return;
-  const b=bookingsDatabase.find(x=>x.id===id); if(!b)return; if(confirm(`Cancel reservation ${id}?`)){b.status='Cancelled';if(b.type==='Hotel Suite' && b.roomNumber){releaseRoom(b.roomNumber);}addAuditLog(`[CANCELLATION] ${id} cancelled by ${roleConfig[currentRoleKey].name}.`);renderStaffRoleModules();}
+  const b=bookingsDatabase.find(x=>x.id===id); if(!b)return; if(confirm(`Cancel reservation ${id}?`)){b.status='Cancelled';if(b.type==='Hotel Suite' && b.roomNumber){releaseRoom(b.roomNumber);}notifyReservationStatus(b, `Reservation ${b.id} has been cancelled. If this wasn't expected, please contact us.`);addAuditLog(`[CANCELLATION] ${id} cancelled by ${roleConfig[currentRoleKey].name}.`);renderStaffRoleModules();}
 }
 function editBookingModal(id){
   const b=bookingsDatabase.find(x => x.id === id); if(!b)return;
@@ -2211,6 +2405,7 @@ async function saveRoleBookingChanges(){
   if(!requirePermission('reservation.edit','save reservation changes')) return;
   const b=bookingsDatabase.find(x=>x.id===currentEditBookingId); if(!b)return;
   if(!validateModifyEmail()){ setModifyFeedback('Update blocked. Enter a valid email address.','error'); return; }
+  const previousStatus=b.status;
   b.name=document.getElementById('editAdmName').value.trim();
   b.email=document.getElementById('editAdmEmail').value.trim();
   b.phone=document.getElementById('editAdmPhone').value.trim();
@@ -2231,6 +2426,10 @@ async function saveRoleBookingChanges(){
     }
   }
 
+  if(b.status!==previousStatus){
+    notifyReservationStatus(b, `Reservation ${b.id} has been updated to: ${b.status}.`);
+  }
+
   addAuditLog(`[RESERVATION UPDATE] ${currentEditBookingId} updated by ${roleConfig[currentRoleKey].name}.`);
   setTimeout(()=>{ closeModal('editAdminOverlay'); renderStaffRoleModules(); showReservationFeedback('Reservation '+currentEditBookingId+' updated successfully.'); }, 350);
 }
@@ -2242,6 +2441,7 @@ async function cancelRoleBooking(){
     b.status='Cancelled';
     if(dbReady() && b.dbId) await updateStudentInDatabase(b.dbId,{registration_status:'Cancelled'});
     if(b.type==='Hotel Suite' && b.roomNumber){ await releaseRoom(b.roomNumber); }
+    notifyReservationStatus(b, `Reservation ${b.id} has been cancelled. If this wasn't expected, please contact us.`);
   }
   addAuditLog(`[CANCELLATION] ${currentEditBookingId} cancelled by ${roleConfig[currentRoleKey].name}.`);
   closeModal('editAdminOverlay');
@@ -2293,7 +2493,7 @@ window.addEventListener('DOMContentLoaded', function() {
   try { selectType('suite'); } catch (err) { console.error('AU SOCIETAS GRAND RESTAURANT initialization error:', err); }
   updateDatabaseIndicator(false, SUPABASE_CONFIGURED ? 'Connecting to Supabase...' : 'Add Supabase URL and publishable key to enable live database.');
   if(SUPABASE_CONFIGURED){
-    loadDatabaseStudents().then(startRealtimeMonitoring);
+    loadDatabaseStudents().then(()=>{ startRealtimeMonitoring(); checkMyReservationUpdates(); });
     loadDatabaseRooms().then(startRoomsRealtimeMonitoring);
   }
 
